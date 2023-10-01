@@ -4,24 +4,22 @@ const { errorHandler } = require('./middlewares/error.middleware');
 const multer = require('multer');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
-const srt = require('node-srt');
-
 const app = express();
 const PORT = process.env.PORT || 8000;
 const UPLOADS_DIRECTORY = process.env.UPLOADS_DIRECTORY || 'uploads/';
 
-// Set up Multer for handling file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // Use UPLOADS_DIRECTORY variable
     cb(null, UPLOADS_DIRECTORY);
   },
   filename: (req, file, cb) => {
     cb(null, Date.now() + '-' + file.originalname);
-  },
+  }
 });
 
 const upload = multer({ storage: storage });
+
+app.use(express.json());
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -33,35 +31,48 @@ app.use((req, res, next) => {
   next();
 });
 
-// Handle file uploads with Multer error handling
 app.post('/api/v1/upload', upload.single('video'), (req, res) => {
-  const videoFilePath = path.join(UPLOADS_DIRECTORY, req.file.filename);
-  const outputSrtPath = path.join(UPLOADS_DIRECTORY, req.file.filename + '.srt');
+  const { path: filePath } = req.file;
+  const outputFilePath = path.join(__dirname, UPLOADS_DIRECTORY, 'output.wav');
 
-  // Transcribe video to SRT format
-  ffmpeg(videoFilePath)
-    .videoCodec('copy')
-    .audioCodec('aac')
+  ffmpeg(filePath)
+    .toFormat('wav')
     .on('end', () => {
-      // Read the generated SRT file
-      const srtData = srt.parseFile(outputSrtPath);
+      const SpeechRecognition = webkitSpeechRecognition || SpeechRecognition;
+      const recognition = new SpeechRecognition();
+      const audioFile = fs.readFileSync(outputFilePath);
+      const audioBuffer = audioFile.buffer.slice(audioFile.byteOffset, audioFile.byteOffset + audioFile.byteLength);
+      const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
+      recognition.language = 'en-US';
 
-      // Send SRT data to frontend
-      res.json({ transcription: srtData });
+      recognition.onresult = (event) => {
+        const transcription = event.results[0][0].transcript;
+        res.json({ transcript: transcription });
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Error occurred while transcribing:', event.error);
+        res.status(500).json({ error: 'Transcription failed.' });
+      };
+
+      recognition.onend = () => {
+        console.log('Transcription ended.');
+      };
+
+      recognition.start();
+      recognition.postMessage({ command: 'start', audioBlob });
     })
     .on('error', (err) => {
       console.error('Error:', err);
-      res.status(500).json({ error: 'Transcription failed' });
+      res.status(500).json({ error: 'Transcription failed.' });
     })
-    .save(outputSrtPath);
+    .save(outputFilePath);
 });
 
-// Serve the video file for playback with path.join
 app.use('/api/v1/videos', express.static(path.join(__dirname, 'uploads')));
 
 app.use(errorHandler);
 
-// Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
