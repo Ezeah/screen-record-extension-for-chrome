@@ -3,6 +3,9 @@ const dotenv = require('dotenv').config();
 const { errorHandler } = require('./middlewares/error.middleware');
 const multer = require('multer');
 const path = require('path');
+const ffmpeg = require('fluent-ffmpeg');
+const srt = require('node-srt');
+
 const app = express();
 const PORT = process.env.PORT || 8000;
 const UPLOADS_DIRECTORY = process.env.UPLOADS_DIRECTORY || 'uploads/';
@@ -11,11 +14,11 @@ const UPLOADS_DIRECTORY = process.env.UPLOADS_DIRECTORY || 'uploads/';
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     // Use UPLOADS_DIRECTORY variable
-    cb(null, UPLOADS_DIRECTORY); 
+    cb(null, UPLOADS_DIRECTORY);
   },
   filename: (req, file, cb) => {
     cb(null, Date.now() + '-' + file.originalname);
-  }
+  },
 });
 
 const upload = multer({ storage: storage });
@@ -32,11 +35,25 @@ app.use((req, res, next) => {
 
 // Handle file uploads with Multer error handling
 app.post('/api/v1/upload', upload.single('video'), (req, res) => {
-  // File has been uploaded and saved to the 'uploads' directory
-  res.send('File uploaded successfully!');
-}, (error, req, res, next) => {
-  // Handle Multer errors
-  res.status(500).json({ error: error.message });
+  const videoFilePath = path.join(UPLOADS_DIRECTORY, req.file.filename);
+  const outputSrtPath = path.join(UPLOADS_DIRECTORY, req.file.filename + '.srt');
+
+  // Transcribe video to SRT format
+  ffmpeg(videoFilePath)
+    .videoCodec('copy')
+    .audioCodec('aac')
+    .on('end', () => {
+      // Read the generated SRT file
+      const srtData = srt.parseFile(outputSrtPath);
+
+      // Send SRT data to frontend
+      res.json({ transcription: srtData });
+    })
+    .on('error', (err) => {
+      console.error('Error:', err);
+      res.status(500).json({ error: 'Transcription failed' });
+    })
+    .save(outputSrtPath);
 });
 
 // Serve the video file for playback with path.join
